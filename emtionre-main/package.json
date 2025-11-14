@@ -4,19 +4,27 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "bun x vite",
+    "dev:api": "node server.cjs",
+    "dev:client": "bun x vite",
+    "dev": "concurrently \"bun run dev:api\" \"bun run dev:client\"",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
     "axios": "^1.12.2",
-    "chart.js": "^4.5.0",
+    "chart.js": "^4.5.1",
+    "cors": "^2.8.5",
     "daisyui": "^5.1.25",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "mysql2": "^3.15.3",
     "react": "^19.1.1",
-    "react-chartjs-2": "^5.3.0",
+    "react-chartjs-2": "^5.3.1",
     "react-dom": "^19.1.1",
-    "react-router-dom": "^7.9.3"
+    "react-router-dom": "^7.9.3",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.36.0",
@@ -25,6 +33,7 @@
     "@types/react-dom": "^19.1.9",
     "@vitejs/plugin-react": "^5.0.3",
     "autoprefixer": "^10.4.21",
+    "concurrently": "^9.0.1",
     "eslint": "^9.36.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",

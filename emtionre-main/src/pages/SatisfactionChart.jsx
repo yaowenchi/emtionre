@@ -1,232 +1,219 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+﻿import React, { useEffect, useMemo, useState } from 'react';
 import { Line } from 'react-chartjs-2';
-import { useSearchParams } from 'react-router-dom';
 import {
   Chart as ChartJS,
-  CategoryScale, LinearScale, PointElement, LineElement,
-  Title, Tooltip, Legend
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend
 } from 'chart.js';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
 
-function today() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${dd}`;
-}
-function hhmm(minStr) {
-  return minStr.slice(11, 16); // 'YYYY-MM-DD HH:mm:00' -> 'HH:mm'
-}
-function colorPrimary() {
-  return '#10b981';
-}
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+
+const formatHHmmss = (ts) => (ts ? ts.slice(11, 19) : '');
 
 export default function SatisfactionChart() {
-  const [params, setParams] = useSearchParams();
-  const dateParam = params.get('date') || today();
-
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
-
-  const [date, setDate] = useState(dateParam);
-  const [segments, setSegments] = useState([]);   // [{start,end,count,points:[{minute,value}]}]
-  const [selected, setSelected] = useState([]);   // boolean[] 對應 segments
-  const [overallAvg, setOverallAvg] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [errorMsg, setErrorMsg] = useState('');
   const [availableDates, setAvailableDates] = useState([]);
-  const triedAutoFallbackRef = useRef(false);
+  const [availableTimes, setAvailableTimes] = useState([]);
+  const [date, setDate] = useState('');
+  const [time, setTime] = useState('');
+  const [points, setPoints] = useState([]);
+  const [meta, setMeta] = useState({ start: null, end: null, avg: null, count: 0, minuteKey: '' });
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
 
-  const pushDateToUrl = (d) => {
-    params.set('date', d);
-    setParams(params, { replace: true });
+  useEffect(() => {
+    (async () => {
+      const defaultDate = await loadAvailableDates();
+      if (defaultDate) {
+        await loadTimes(defaultDate, { autoFetch: true });
+      }
+    })();
+  }, []);
+
+  const loadAvailableDates = async () => {
+    try {
+      const resp = await fetch(`${API_URL}/api/available-dates?limit=60`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const payload = await resp.json();
+      const list = payload.dates || [];
+      setAvailableDates(list);
+      const fallback = list[0]?.date || '';
+      setDate(fallback);
+      return fallback;
+    } catch (err) {
+      setErrorMsg(`無法載入日期：${err.message}`);
+      return null;
+    }
   };
 
-  const loadSegments = async (d) => {
+  const loadTimes = async (targetDate, { autoFetch = false } = {}) => {
+    if (!targetDate) {
+      setAvailableTimes([]);
+      setTime('');
+      return;
+    }
+    try {
+      const resp = await fetch(`${API_URL}/api/available-times?date=${encodeURIComponent(targetDate)}`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const payload = await resp.json();
+      const list = payload.times || [];
+      setAvailableTimes(list);
+      if (!list.length) {
+        setTime('');
+        setPoints([]);
+        setMeta({ start: null, end: null, avg: null, count: 0, minuteKey: '' });
+        return;
+      }
+      const nextTime = list.find((item) => item.time === time) ? time : list[0].time;
+      setTime(nextTime);
+      if (autoFetch) {
+        await fetchMinuteSeries(targetDate, nextTime);
+      }
+    } catch (err) {
+      setErrorMsg(`無法載入時間：${err.message}`);
+      setAvailableTimes([]);
+      setTime('');
+    }
+  };
+
+  const fetchMinuteSeries = async (targetDate, targetTime) => {
+    if (!targetDate || !targetTime) {
+      setErrorMsg('請先選擇日期與時間');
+      return;
+    }
     setLoading(true);
     setErrorMsg('');
     try {
-      const r = await fetch(`${API_URL}/api/satisfaction-segments?date=${encodeURIComponent(d)}`);
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const payload = await r.json();
-      const segs = payload.segments || [];
-      setSegments(segs);
-      setSelected(segs.map((_, idx) => idx === 0)); // 預設只勾第一段
-      setOverallAvg(payload.overall_avg ?? null);
-    } catch (e) {
-      setErrorMsg(`載入失敗：${e.message}`);
-      setSegments([]);
-      setSelected([]);
-      setOverallAvg(null);
+      const params = new URLSearchParams({ date: targetDate, time: targetTime });
+      const resp = await fetch(`${API_URL}/api/minute-satisfaction?${params.toString()}`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const payload = await resp.json();
+      setPoints(payload.points || []);
+      setMeta({
+        start: payload.start || null,
+        end: payload.end || null,
+        avg: payload.avg ?? null,
+        count: payload.count ?? (payload.points ? payload.points.length : 0),
+        minuteKey: payload.minuteKey || targetTime
+      });
+    } catch (err) {
+      setErrorMsg(`載入失敗：${err.message}`);
+      setPoints([]);
+      setMeta({ start: null, end: null, avg: null, count: 0, minuteKey: '' });
     } finally {
       setLoading(false);
     }
   };
 
-  const loadAvailableDates = async () => {
-    try {
-      const r = await fetch(`${API_URL}/api/available-dates?limit=60`);
-      if (!r.ok) return;
-      const payload = await r.json();
-      setAvailableDates(payload.dates || []);
-      return payload.dates || [];
-    } catch {
-      return [];
-    }
+  const handleDateChange = async (event) => {
+    const nextDate = event.target.value;
+    setDate(nextDate);
+    await loadTimes(nextDate, { autoFetch: false });
   };
 
-  // 初次載入：先嘗試現在 URL 的日期；若沒有資料，改抓最近有資料的那天
-  useEffect(() => {
-    (async () => {
-      setDate(dateParam);
-      await loadSegments(dateParam);
-      if (!triedAutoFallbackRef.current) {
-        triedAutoFallbackRef.current = true;
-        // 若當天沒有任何段落，嘗試自動跳到最近有資料的日期
-        if (segments.length === 0) {
-          const dates = await loadAvailableDates();
-          if (dates.length > 0 && dates[0].date && dates[0].date !== dateParam) {
-            setDate(dates[0].date);
-            pushDateToUrl(dates[0].date);
-            await loadSegments(dates[0].date);
+  const handleTimeChange = (event) => {
+    setTime(event.target.value);
+  };
+
+  const chartData = useMemo(() => ({
+    labels: points.map((p) => formatHHmmss(p.timestamp)),
+    datasets: [
+      {
+        label: meta.minuteKey ? `${meta.minuteKey} 的情緒趨勢` : '情緒趨勢',
+        data: points.map((p) => p.value),
+        borderColor: '#0ea5e9',
+        backgroundColor: 'rgba(14,165,233,0.2)',
+        pointRadius: 3,
+        tension: 0.2,
+        spanGaps: false
+      }
+    ]
+  }), [points, meta.minuteKey]);
+
+  const chartOptions = useMemo(() => ({
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    plugins: {
+      legend: { position: 'top' },
+      tooltip: {
+        callbacks: {
+          label: (ctx) => {
+            const value = ctx.parsed.y;
+            return typeof value === 'number'
+              ? `滿意度 ${value.toFixed(2)}`
+              : '無資料';
           }
         }
       }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateParam]); // 只在 URL 日期改變時觸發
-
-  // 由選取段落組合出 labels/data（段落間插入 null 形成缺口）
-  const chartData = useMemo(() => {
-    const labels = [];
-    const data = [];
-    let firstAdded = false;
-
-    segments.forEach((seg, i) => {
-      if (!selected[i]) return;
-      if (firstAdded) {
-        labels.push('');  // 段落間插入空點讓線段斷開
-        data.push(null);
+    },
+    scales: {
+      y: {
+        min: 0,
+        max: 100,
+        title: { display: true, text: '滿意度（50 為基準）' }
+      },
+      x: {
+        title: { display: true, text: '秒 (HH:mm:ss)' },
+        ticks: { maxTicksLimit: 12 }
       }
-      for (const p of seg.points) {
-        labels.push(hhmm(p.minute));
-        data.push(p.value);
-      }
-      firstAdded = true;
-    });
-
-    return {
-      labels,
-      datasets: [
-        {
-          label: `${date} satisfaction (per minute, segmented)`,
-          data,
-          borderColor: colorPrimary(),
-          backgroundColor: `${colorPrimary()}33`,
-          tension: 0.25,
-          spanGaps: false,
-          pointRadius: 2
-        }
-      ]
-    };
-  }, [segments, selected, date]);
-
-  const toggleSeg = (idx) => setSelected(prev => prev.map((v, i) => (i === idx ? !v : v)));
-  const selectAll = () => setSelected(segments.map(() => true));
-  const selectNone = () => setSelected(segments.map(() => false));
-  const selectFirst = () => setSelected(segments.map((_, i) => i === 0));
-
-  const handleLoadClick = async () => {
-    pushDateToUrl(date);
-    await loadSegments(date);
-  };
-  const handleLoadLatestClick = async () => {
-    const dates = availableDates.length ? availableDates : await loadAvailableDates();
-    if (dates.length > 0 && dates[0].date) {
-      setDate(dates[0].date);
-      pushDateToUrl(dates[0].date);
-      await loadSegments(dates[0].date);
     }
-  };
+  }), []);
 
   return (
-    <div style={{ padding: 16, width: '100%', maxWidth: '100%' }}>
-      <h2 style={{ marginBottom: 12, textAlign: 'center' }}>
-        每分鐘滿意度（依段落）— {date}
-      </h2>
+    <div style={{ padding: 16, width: '100%', maxWidth: 1200, margin: '0 auto' }}>
+      <h2 style={{ textAlign: 'center', marginBottom: 12 }}>每分鐘滿意度折線圖</h2>
 
-      {/* 資料選擇 */}
-      <div style={{ marginBottom: 8, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-        <div>
-          <label>日期：</label>
-          <input
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-          />
-        </div>
-        <button onClick={handleLoadClick}>載入</button>
-        <button onClick={handleLoadLatestClick}>最近有資料</button>
-        {availableDates.length > 0 && (
-          <span style={{ color: '#666' }}>
-            近幾天有資料：{availableDates.slice(0, 5).map(d => d.date).join(', ')}{availableDates.length > 5 ? ' ...' : ''}
-          </span>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 12 }}>
+        <label>
+          <span>日期：</span>
+          <select value={date} onChange={handleDateChange}>
+            {availableDates.map((d) => (
+              <option key={d.date} value={d.date}>
+                {d.date}（{d.count} 筆）
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          <span>時間：</span>
+          <select value={time} onChange={handleTimeChange} disabled={!availableTimes.length}>
+            {availableTimes.map((t) => (
+              <option key={t.time} value={t.time}>
+                {t.time}（{t.count} 筆）
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <button onClick={() => fetchMinuteSeries(date, time)} disabled={loading || !time}>
+          {loading ? '載入中…' : '載入時間'}
+        </button>
+      </div>
+
+      {errorMsg && <div style={{ color: '#b91c1c', marginBottom: 8 }}>{errorMsg}</div>}
+
+      <div style={{ height: '65vh', width: '100%', border: '1px solid #eee', borderRadius: 8, padding: 12 }}>
+        {points.length ? (
+          <Line data={chartData} options={chartOptions} />
+        ) : (
+          <div style={{ textAlign: 'center', marginTop: '20%' }}>
+            {loading ? '資料載入中…' : '請選擇有資料的日期與時間後按「載入時間」。'}
+          </div>
         )}
       </div>
 
-      {/* 錯誤訊息 */}
-      {errorMsg && (
-        <div style={{ color: '#b91c1c', marginBottom: 8 }}>
-          {errorMsg}
-        </div>
-      )}
-
-      {/* 段落勾選列：永遠顯示控制與按鈕 */}
-      <div style={{ marginBottom: 8 }}>
-        <strong>段落：</strong>
-        {loading && <span> Loading...</span>}
-        {!loading && segments.length === 0 && <span> 無當日資料</span>}
-        <div style={{ margin: '6px 0' }}>
-          <button onClick={selectFirst} style={{ marginRight: 8 }}>只看第一段</button>
-          <button onClick={selectAll} style={{ marginRight: 8 }}>全選</button>
-          <button onClick={selectNone}>全不選</button>
-        </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-          {segments.map((s, idx) => (
-            <label key={idx} style={{ border: '1px solid #ddd', borderRadius: 6, padding: '6px 8px' }}>
-              <input
-                type="checkbox"
-                checked={!!selected[idx]}
-                onChange={() => toggleSeg(idx)}
-                style={{ marginRight: 6 }}
-              />
-              {hhmm(s.start)} ~ {hhmm(s.end)}（{s.count} 分）
-            </label>
-          ))}
-        </div>
-      </div>
-
-      {/* 圖表：撐滿頁面寬、高 70vh */}
-      <div style={{ width: '100%', height: '70vh' }}>
-        <Line
-          data={chartData}
-          options={{
-            responsive: true,
-            maintainAspectRatio: false,
-            animation: false,
-            plugins: { legend: { display: true, position: 'top' } },
-            interaction: { mode: 'nearest', intersect: false },
-            scales: {
-              y: { min: 0, max: 100, title: { display: true, text: '滿意度' } },
-              x: { title: { display: true, text: '時間（HH:mm）' }, ticks: { maxRotation: 0, autoSkip: true } }
-            }
-          }}
-        />
-      </div>
-
       <div style={{ marginTop: 12, fontSize: 16 }}>
-        當日平均滿意度：{overallAvg == null ? '-' : overallAvg.toFixed(2)}
+        <div>分鐘區間：{meta.start ? `${meta.start} ~ ${meta.end}` : '-'}</div>
+        <div>資料筆數：{meta.count || 0}</div>
+        <div>平均滿意度：{meta.avg == null ? '-' : meta.avg.toFixed(2)}</div>
       </div>
     </div>
   );

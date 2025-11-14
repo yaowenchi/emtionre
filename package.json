@@ -8,5 +8,10 @@
     "react-chartjs-2": "^5.3.1",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1"
+  },
+  "scripts": {
+    "dev:api": "node server.cjs",
+    "dev:client": "bun x vite",
+    "dev": "concurrently \"bun run dev:api\" \"bun run dev:client\""
   }
 }

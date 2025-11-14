@@ -12,7 +12,7 @@ export default function Login() {
   const handleSubmit = (e) => {
     e.preventDefault();
     if (login(employeeId, password)) {
-      navigate('/dashboard');
+      navigate('/chart'); // 登入後直接前往折線圖頁面
     } else {
       setError('Invalid employee ID or password');
     }
